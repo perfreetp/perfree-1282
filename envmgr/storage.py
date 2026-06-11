@@ -379,10 +379,13 @@ class EnvStore:
         env = env_name or self.get_current_env(profile)
         self._snapshot(profile)
         count = 0
-        for key, value, is_secret in result["pending"]:
+        for key, value, is_secret in result["added"]:
             self.set_variable(key, value, secret=is_secret, env_name=env, skip_snapshot=True, profile=profile)
             count += 1
-        self._record_audit("import", f"[{env}] 从 {Path(file_path).name} 导入 {count} 个变量", profile=profile)
+        for key, old_value, new_value, is_secret in result["updated"]:
+            self.set_variable(key, new_value, secret=is_secret, env_name=env, skip_snapshot=True, profile=profile)
+            count += 1
+        self._record_audit("import", f"[{env}] 从 {Path(file_path).name} 导入 {count} 个变量 (新增 {len(result['added'])}, 覆盖 {len(result['updated'])}, 跳过 {len(result['skipped'])})", profile=profile)
         self.save()
         return count
 
@@ -550,7 +553,7 @@ class EnvStore:
             filtered.append(entry)
         return filtered[-limit:] if limit > 0 else filtered
 
-    def export_audit_report(self, decrypt_secrets: bool = False, profile: Optional[str] = None, **filters) -> str:
+    def export_audit_report(self, profile: Optional[str] = None, **filters) -> str:
         entries = self.get_audit_log(profile=profile, **filters)
         lines = [
             "# envmgr 审计报告",
@@ -564,8 +567,11 @@ class EnvStore:
         ]
         for e in entries:
             detail = e.get("detail", "")
-            if not decrypt_secrets:
-                detail = re.sub(r'(\S+)\s*=\s*([^\s][^\s]*)', lambda m: f"{m.group(1)} = {'***' if any(kw in m.group(1).lower() for kw in ['password','secret','token','key','api_key']) else m.group(2)}", detail)
+            detail = re.sub(
+                r'(\S+)\s*=\s*(\S+)',
+                lambda m: f"{m.group(1)} = {'***' if any(kw in m.group(1).lower() for kw in ['password', 'secret', 'token', 'key', 'api_key']) else m.group(2)}",
+                detail,
+            )
             lines.append(f"| {e.get('timestamp','')} | {e.get('action','')} | {detail} |")
         return "\n".join(lines) + "\n"
 

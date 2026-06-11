@@ -8,8 +8,9 @@ from .storage import EnvStore
 from .crypto import mask_value, is_encrypted
 
 
-def _profile_header(store: EnvStore) -> str:
-    return f"[Profile: {store.get_current_profile()}]"
+def _profile_header(store: EnvStore, profile: str = None) -> str:
+    name = profile or store.get_current_profile()
+    return f"[Profile: {name}]"
 
 
 def cmd_init(args, store: EnvStore):
@@ -69,13 +70,13 @@ def cmd_list(args, store: EnvStore):
         return 1
 
     if args.profiles:
-        return cmd_profile(argparse.Namespace(profile_action="list"), store)
+        return cmd_profile(argparse.Namespace(profile_action="list", profile=args.profile), store)
 
     if args.environments:
         envs = store.list_envs(profile=args.profile)
         current = store.get_current_env(profile=args.profile)
         default = store.get_default_env(profile=args.profile)
-        print(f"{_profile_header(store)} 可用环境:")
+        print(f"{_profile_header(store, args.profile)} 可用环境:")
         for env in envs:
             marker = ""
             if env == current:
@@ -92,7 +93,7 @@ def cmd_list(args, store: EnvStore):
         print(f"错误: {e}")
         return 1
 
-    print(f"{_profile_header(store)} 环境: {target_env}")
+    print(f"{_profile_header(store, args.profile)} 环境: {target_env}")
     if not variables:
         print("  (无变量)")
         return 0
@@ -145,7 +146,7 @@ def cmd_set(args, store: EnvStore):
         return 1
     env = args.env or store.get_current_env(profile=args.profile)
     secret_str = " [加密]" if args.secret else ""
-    print(f"{_profile_header(store)} ✅ [{env}] {args.key} = {'***' if args.secret else args.value}{secret_str}")
+    print(f"{_profile_header(store, args.profile)} ✅ [{env}] {args.key} = {'***' if args.secret else args.value}{secret_str}")
     return 0
 
 
@@ -197,7 +198,7 @@ def cmd_unset(args, store: EnvStore):
         return 1
     env = args.env or store.get_current_env(profile=args.profile)
     if removed:
-        print(f"{_profile_header(store)} 🗑️  [{env}] 已删除 {args.key}")
+        print(f"{_profile_header(store, args.profile)} 🗑️  [{env}] 已删除 {args.key}")
     else:
         print(f"变量 '{args.key}' 不存在")
     return 0 if removed else 1
@@ -212,7 +213,7 @@ def cmd_switch(args, store: EnvStore):
     except ValueError as e:
         print(f"错误: {e}")
         return 1
-    print(f"{_profile_header(store)} 🔄 已切换到环境: {args.environment}")
+    print(f"{_profile_header(store, args.profile)} 🔄 已切换到环境: {args.environment}")
     return 0
 
 
@@ -233,7 +234,7 @@ def cmd_diff(args, store: EnvStore):
         print(f"错误: {e}")
         return 1
 
-    print(f"{_profile_header(store)} 比较 {env_a} vs {env_b}")
+    print(f"{_profile_header(store, args.profile)} 比较 {env_a} vs {env_b}")
     print("=" * 40)
 
     reveal = args.decrypt
@@ -364,7 +365,7 @@ def cmd_import(args, store: EnvStore):
     skipped = len(result["skipped"])
     conflicts = len(result["conflicts"])
 
-    print(f"{_profile_header(store)} 导入预览: {Path(args.file).name} -> {env}")
+    print(f"{_profile_header(store, args.profile)} 导入预览: {Path(args.file).name} -> {env}")
     print(f"  新增:   {added} 个")
     print(f"  覆盖:   {updated} 个")
     print(f"  跳过:   {skipped} 个 (值相同)")
@@ -417,7 +418,7 @@ def cmd_import(args, store: EnvStore):
         print(f"错误: {e}")
         return 1
 
-    print(f"📥 已从 {args.file} 导入 {count} 个变量到 {env} 环境")
+    print(f"📥 已从 {args.file} 导入 {count} 个变量到 {env} 环境 (新增 {added}, 覆盖 {updated}, 跳过 {skipped})")
     return 0
 
 
@@ -457,7 +458,7 @@ def cmd_rollback(args, store: EnvStore):
         print("错误: 未初始化。请先运行 'envmgr init'")
         return 1
     if store.rollback(profile=args.profile):
-        print(f"{_profile_header(store)} ⏪ 已回滚到上一个快照")
+        print(f"{_profile_header(store, args.profile)} ⏪ 已回滚到上一个快照")
         return 0
     else:
         print("没有可回滚的快照")
@@ -481,7 +482,6 @@ def cmd_log(args, store: EnvStore):
 
     if args.export:
         report = store.export_audit_report(
-            decrypt_secrets=args.decrypt,
             profile=args.profile,
             limit=args.limit,
             env=args.env,
@@ -501,7 +501,7 @@ def cmd_log(args, store: EnvStore):
         print("暂无操作记录 (或筛选后无匹配)")
         return 0
 
-    print(f"{_profile_header(store)} 操作日志 ({len(logs)} 条)")
+    print(f"{_profile_header(store, args.profile)} 操作日志 ({len(logs)} 条)")
     if any([args.env, args.key, args.action, args.since, args.until]):
         filters = []
         if args.env:
@@ -611,7 +611,7 @@ def cmd_clean(args, store: EnvStore):
         print(f"错误: {e}")
         return 1
     if removed:
-        print(f"{_profile_header(store)} 🧹 已清理 {len(removed)} 个未使用变量:")
+        print(f"{_profile_header(store, args.profile)} 🧹 已清理 {len(removed)} 个未使用变量:")
         for item in removed:
             print(f"  - {item}")
     else:
@@ -629,10 +629,10 @@ def cmd_default(args, store: EnvStore):
         except ValueError as e:
             print(f"错误: {e}")
             return 1
-        print(f"{_profile_header(store)} ✅ 默认环境已设置为: {args.environment}")
+        print(f"{_profile_header(store, args.profile)} ✅ 默认环境已设置为: {args.environment}")
         return 0
     else:
-        print(f"{_profile_header(store)} 默认环境: {store.get_default_env(profile=args.profile)}")
+        print(f"{_profile_header(store, args.profile)} 默认环境: {store.get_default_env(profile=args.profile)}")
         return 0
 
 
@@ -642,16 +642,16 @@ def cmd_required(args, store: EnvStore):
         return 1
     if args.add:
         store.set_required(args.add, required=True, profile=args.profile)
-        print(f"{_profile_header(store)} ✅ '{args.add}' 已标记为必填")
+        print(f"{_profile_header(store, args.profile)} ✅ '{args.add}' 已标记为必填")
         return 0
     elif args.remove:
         store.set_required(args.remove, required=False, profile=args.profile)
-        print(f"{_profile_header(store)} ✅ '{args.remove}' 已取消必填")
+        print(f"{_profile_header(store, args.profile)} ✅ '{args.remove}' 已取消必填")
         return 0
     else:
         required = store.get_required_vars(profile=args.profile)
         if required:
-            print(f"{_profile_header(store)} 必填变量:")
+            print(f"{_profile_header(store, args.profile)} 必填变量:")
             for key in sorted(required):
                 print(f"  - {key}")
         else:
@@ -668,7 +668,7 @@ def cmd_env_add(args, store: EnvStore):
     except ValueError as e:
         print(f"错误: {e}")
         return 1
-    print(f"{_profile_header(store)} ✅ 环境 '{args.name}' 已创建")
+    print(f"{_profile_header(store, args.profile)} ✅ 环境 '{args.name}' 已创建")
     return 0
 
 
@@ -681,7 +681,7 @@ def cmd_env_remove(args, store: EnvStore):
     except ValueError as e:
         print(f"错误: {e}")
         return 1
-    print(f"{_profile_header(store)} 🗑️  环境 '{args.name}' 已删除")
+    print(f"{_profile_header(store, args.profile)} 🗑️  环境 '{args.name}' 已删除")
     return 0
 
 
@@ -705,7 +705,7 @@ def main():
 
     p_profile = subparsers.add_parser("profile", help="Profile 管理 (list/switch/create/delete)")
     profile_sub = p_profile.add_subparsers(dest="profile_action")
-    p_profile.set_defaults(profile_action="list")
+    p_profile.set_defaults(profile_action="list", func=cmd_profile)
 
     p_pl = profile_sub.add_parser("list", help="列出所有 Profile")
     p_pl.set_defaults(func=cmd_profile)
