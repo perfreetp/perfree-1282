@@ -108,22 +108,30 @@ def cmd_get(args, store: EnvStore):
         print("错误: 未初始化。请先运行 'envmgr init'")
         return 1
     try:
-        value = store.get_variable(args.key, env_name=args.env)
+        variables = store.get_variables(args.env, decrypt=args.decrypt)
     except ValueError as e:
         print(f"错误: {e}")
         return 1
-    if value is None:
+
+    if args.key not in variables:
         if not args.quiet:
             print(f"变量 '{args.key}' 不存在")
         return 1
 
+    var = variables[args.key]
+    value = var.get("value", "")
+    is_secret = var.get("secret", False)
+
     if args.expand:
         try:
-            variables = store.get_variables(args.env, decrypt=True)
-            variables = store._expand_variables(variables)
-            value = variables.get(args.key, {}).get("value", value)
+            all_vars_plain = store.get_variables(args.env, decrypt=True)
+            expanded = store._expand_variables(all_vars_plain)
+            value = expanded.get(args.key, {}).get("value", value)
         except Exception:
             pass
+
+    if is_secret and not args.decrypt:
+        value = mask_value(value, secret=True)
 
     if args.raw:
         sys.stdout.write(value)
@@ -182,13 +190,13 @@ def cmd_diff(args, store: EnvStore):
     print(f"比较 {env_a} vs {env_b}")
     print("=" * 40)
 
+    reveal = args.decrypt
+
     if only_a:
         print(f"\n  仅存在于 {env_a}:")
         for k in sorted(only_a.keys()):
             v = only_a[k].get("value", "")
-            if only_a[k].get("secret") and is_encrypted(v):
-                v = "********"
-            elif only_a[k].get("secret"):
+            if only_a[k].get("secret") and not reveal:
                 v = mask_value(v, secret=True)
             print(f"    + {k} = {v}")
 
@@ -196,16 +204,17 @@ def cmd_diff(args, store: EnvStore):
         print(f"\n  仅存在于 {env_b}:")
         for k in sorted(only_b.keys()):
             v = only_b[k].get("value", "")
-            if only_b[k].get("secret") and is_encrypted(v):
-                v = "********"
-            elif only_b[k].get("secret"):
+            if only_b[k].get("secret") and not reveal:
                 v = mask_value(v, secret=True)
             print(f"    + {k} = {v}")
 
     if different:
         print(f"\n  值不同:")
         for k in sorted(different.keys()):
-            va, vb = different[k]
+            va, vb, is_secret = different[k]
+            if is_secret and not reveal:
+                va = mask_value(va, secret=True)
+                vb = mask_value(vb, secret=True)
             print(f"    ~ {k}")
             print(f"        {env_a}: {va}")
             print(f"        {env_b}: {vb}")
@@ -503,6 +512,7 @@ def main():
     p_get.add_argument("-r", "--raw", action="store_true", help="原始输出（无换行）")
     p_get.add_argument("-q", "--quiet", action="store_true", help="安静模式")
     p_get.add_argument("-x", "--expand", action="store_true", help="展开变量引用")
+    p_get.add_argument("-d", "--decrypt", action="store_true", help="敏感变量输出明文（默认脱敏）")
     p_get.set_defaults(func=cmd_get)
 
     p_unset = subparsers.add_parser("unset", help="删除变量")
@@ -517,6 +527,7 @@ def main():
     p_diff = subparsers.add_parser("diff", help="比较两个环境")
     p_diff.add_argument("env_a", nargs="?", help="环境A")
     p_diff.add_argument("env_b", nargs="?", help="环境B")
+    p_diff.add_argument("-d", "--decrypt", action="store_true", help="敏感变量显示明文（默认脱敏）")
     p_diff.set_defaults(func=cmd_diff)
 
     p_exec = subparsers.add_parser("exec", help="带环境执行命令")

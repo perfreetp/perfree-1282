@@ -143,11 +143,22 @@ class EnvStore:
         return copy.deepcopy(vars_dict)
 
     def set_variable(self, key: str, value: str, secret: bool = False,
-                     required: bool = False, env_name: Optional[str] = None):
+                     required: bool = False, env_name: Optional[str] = None,
+                     skip_snapshot: bool = False):
         env = env_name or self.get_current_env()
         if env not in self.data["environments"]:
             raise ValueError(f"环境不存在: {env}")
-        self._snapshot()
+
+        existing_keys = self.data["environments"][env]["variables"].keys()
+        key_lower = key.lower()
+        for existing in existing_keys:
+            if existing != key and existing.lower() == key_lower:
+                raise ValueError(
+                    f"大小写冲突: '{key}' 与已存在变量 '{existing}' 等价"
+                )
+
+        if not skip_snapshot:
+            self._snapshot()
         old_value = None
         if key in self.data["environments"][env]["variables"]:
             old_var = self.data["environments"][env]["variables"][key]
@@ -165,7 +176,8 @@ class EnvStore:
             self.data.setdefault("required_vars", []).append(key)
         action = "update" if old_value is not None else "set"
         self._record_audit(action, f"[{env}] {key} = {'***' if secret else value}")
-        self.save()
+        if not skip_snapshot:
+            self.save()
 
     def get_variable(self, key: str, env_name: Optional[str] = None) -> Optional[str]:
         env = env_name or self.get_current_env()
@@ -200,8 +212,8 @@ class EnvStore:
         path = Path(file_path)
         if not path.exists():
             raise FileNotFoundError(f"文件不存在: {file_path}")
-        self._snapshot()
-        count = 0
+
+        pending = []
         with open(path, "r", encoding="utf-8") as f:
             for line in f:
                 line = line.strip()
@@ -215,8 +227,29 @@ class EnvStore:
                 is_secret = key in secret_keys or any(
                     kw in key.lower() for kw in ["password", "secret", "token", "key", "api_key"]
                 )
-                self.set_variable(key, value, secret=is_secret, env_name=env)
-                count += 1
+                pending.append((key, value, is_secret))
+
+        existing_keys = self.data["environments"][env]["variables"].keys()
+        pending_keys_lower = {}
+        for key, _, _ in pending:
+            kl = key.lower()
+            for existing in existing_keys:
+                if existing != key and existing.lower() == kl:
+                    raise ValueError(
+                        f"导入失败: 变量 '{key}' 与已存在变量 '{existing}' 大小写冲突"
+                    )
+            if kl in pending_keys_lower and pending_keys_lower[kl] != key:
+                raise ValueError(
+                    f"导入失败: 文件内变量 '{key}' 与 '{pending_keys_lower[kl]}' 大小写冲突"
+                )
+            pending_keys_lower[kl] = key
+
+        self._snapshot()
+
+        count = 0
+        for key, value, is_secret in pending:
+            self.set_variable(key, value, secret=is_secret, env_name=env, skip_snapshot=True)
+            count += 1
         self._record_audit("import", f"[{env}] 从 {path.name} 导入 {count} 个变量")
         self.save()
         return count
@@ -274,7 +307,7 @@ class EnvStore:
             result[key]["value"] = plain_values[key]
         return result
 
-    def diff_envs(self, env_a: str, env_b: str) -> Tuple[Dict[str, dict], Dict[str, dict], Dict[str, Tuple[str, str]]]:
+    def diff_envs(self, env_a: str, env_b: str) -> Tuple[Dict[str, dict], Dict[str, dict], Dict[str, Tuple[str, str, bool]]]:
         vars_a = self.get_variables(env_a, decrypt=True)
         vars_b = self.get_variables(env_b, decrypt=True)
         keys_a = set(vars_a.keys())
@@ -286,7 +319,8 @@ class EnvStore:
             va = vars_a[k].get("value", "")
             vb = vars_b[k].get("value", "")
             if va != vb:
-                different[k] = (va, vb)
+                is_secret = vars_a[k].get("secret", False) or vars_b[k].get("secret", False)
+                different[k] = (va, vb, is_secret)
         return only_a, only_b, different
 
     def check_required(self, env_name: Optional[str] = None) -> List[str]:
